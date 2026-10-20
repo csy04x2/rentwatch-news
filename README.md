@@ -1,7 +1,7 @@
 # RentWatch Seoul
 
 > **서울 전월세 실거래 데이터 기반 RAG·AI 기사 생성 및 검수 미니 서비스**  
-> 대상 독자: 한국의 부동산부 취재기자 · 단계: **설계 완료, 구현 전** · 설계 기준: 2026-10-20
+> 대상 독자: 한국의 부동산부 취재기자 · 단계: **DB 스키마·뼈대 작성** · 설계 기준: 2026-10-20
 
 ## 목차
 1. [프로젝트 소개](#1-프로젝트-소개)
@@ -277,7 +277,43 @@ erDiagram
 
 ## 7. 실행 방법
 
-**작성 예정** — 현재는 코드가 없는 설계 단계이다. FastAPI·MySQL 설치 및 실행 명령, 환경변수 설정, 데이터 수집·서버 구동 방법은 구현 후 추가한다.
+### DB 초기화 (현재 구현된 범위)
+
+MySQL 8.4 서버가 실행 중이어야 한다. `db/schema.sql`은 데이터베이스 `rentwatch_seoul`과 5개 테이블을 생성하며, `db/seed.sql`은 **실제 거래가 아닌 가상 샘플 5건**을 추가한다.
+
+**방법 A — MySQL Workbench:** MySQL 서버에 접속 → **File > Open SQL Script**에서 `db/schema.sql` 열기 → 번개 모양 **Execute** 클릭. 테스트가 필요하면 `db/seed.sql`도 같은 방법으로 실행한다.
+
+**방법 B — MySQL CLI(cmd.exe 또는 bash):** 저장소 루트에서 실행한다.
+
+```cmd
+mysql -u root -p < db/schema.sql
+mysql -u root -p < db/seed.sql
+```
+
+**Windows PowerShell:** 위의 `<` 리다이렉션 문법은 PowerShell에서 바로 실행되지 않을 수 있으므로 아래 명령을 사용한다.
+
+```powershell
+cmd /c "mysql -u root -p < db/schema.sql"
+cmd /c "mysql -u root -p < db/seed.sql"
+```
+
+`db` 폴더에서 실행하는 경우(cmd.exe) `mysql -u root -p < schema.sql`도 가능하다. `mysql` 명령이 실행되지 않으면 설치 및 PATH 설정을 확인한다.
+
+**결과 확인 (Workbench SQL Editor):**
+
+```sql
+USE rentwatch_seoul;
+SHOW TABLES;
+SELECT COUNT(*) AS sample_count FROM rental_transactions
+WHERE source_row_key LIKE 'SEED-SAMPLE-%';
+```
+
+예상 결과는 테이블 **5개**, 샘플 삽입 후 **5건**이다. 샘플은 `raw_data.sample=true` 또는 `SEED-SAMPLE-` 접두어로 구분한다. **실제 통계 및 기사에 가상 거래를 포함하면 안 된다.**
+
+Python 의존성은 추후 `pip install -r requirements.txt`로 설치하며, `.env.example`을 복사한 `.env`에 본인 인증키 및 DB 비밀번호를 입력한다. `.env`는 Git에서 제외된다.
+
+**미구현:** 실제 API 수집, DB 접속 코드, CRUD, 기사 생성 및 승인 서버 로직. DB CHECK는 승인 기록의 기초 조건만 검사한다. Fact Sheet 상태·현재 본문 검수·실제 사람 승인 요청은 향후 FastAPI에서 검증한다. `source_row_key` 생성 방식은 실제 API 응답 확인 후 결정한다.
+
 
 ## 8. 테스트 항목
 
