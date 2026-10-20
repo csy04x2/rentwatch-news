@@ -59,6 +59,27 @@
       .card { padding: 16px; }
       .card .value { font-size: 23px; }
     }
+    
+nav {
+  display: flex;
+  gap: 20px;
+  margin-top: 18px;
+}
+
+nav a {
+  color: #cbd6e5;
+  text-decoration: none;
+}
+
+nav a.active {
+  color: white;
+  font-weight: bold;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
+
   </style>
 </head>
 
@@ -66,6 +87,11 @@
   <header>
     <h1>RentWatch Seoul</h1>
     <p>전월세 실거래 데이터 기반 취재 분석</p>
+
+    <nav>
+    <a href="/dashboard" class="active">S01 데이터 분석</a>
+    <a href="/fact-sheet">S02 Fact Sheet</a>
+  </nav>
   </header>
 
   <main>
@@ -196,74 +222,3 @@
 </body>
 </html>
 
-# ===== S02 Fact Sheet 조회 API =====
-
-@app.get("/api/fact-sheets/{fact_sheet_id}")
-def read_fact_sheet(fact_sheet_id: int):
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("""
-                SELECT
-                    id,
-                    topic,
-                    region_code,
-                    property_type,
-                    period_start,
-                    period_end,
-                    facts_json,
-                    evidence_json,
-                    verification_status,
-                    created_at
-                FROM fact_sheets
-                WHERE id = :id
-            """),
-            {"id": fact_sheet_id},
-        ).mappings().first()
-
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Fact Sheet를 찾을 수 없습니다.",
-        )
-
-    facts = row["facts_json"]
-    evidence = row["evidence_json"]
-
-    if isinstance(facts, str):
-        facts = json.loads(facts)
-
-    if isinstance(evidence, str):
-        evidence = json.loads(evidence)
-
-    transaction_ids = evidence.get("transaction_ids", [])
-
-    return {
-        "id": row["id"],
-        "topic": row["topic"],
-        "region_code": row["region_code"],
-        "property_type": row["property_type"],
-        "period_start": row["period_start"].isoformat(),
-        "period_end": row["period_end"].isoformat(),
-        "status": row["verification_status"],
-        "created_at": row["created_at"].isoformat(),
-        "facts": facts,
-        "evidence": {
-            "source_org": evidence.get("source_org"),
-            "source_url": evidence.get("source_url"),
-            "source_row_count": evidence.get("source_row_count"),
-            "transaction_id_count": len(transaction_ids),
-            "transaction_id_sample": transaction_ids[:20],
-            "collected_at_min": evidence.get("collected_at_min"),
-            "collected_at_max": evidence.get("collected_at_max"),
-            "calculation": evidence.get("calculation", {}),
-            "limitations": evidence.get("limitations", []),
-            "verification_checks": evidence.get(
-                "verification_checks", {}
-            ),
-        },
-    }
-
-
-@app.get("/fact-sheet", include_in_schema=False)
-def fact_sheet_page():
-    return FileResponse(BASE_DIR / "fact_sheet.html")
