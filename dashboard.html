@@ -1,0 +1,269 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RentWatch Seoul | 데이터 분석</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f5f7fb;
+      color: #202938;
+      font-family: Arial, "Malgun Gothic", sans-serif;
+    }
+    header {
+      background: #172b49;
+      color: white;
+      padding: 24px max(24px, calc((100% - 1060px)/2));
+    }
+    header h1 { margin: 0 0 8px; font-size: 25px; }
+    header p { margin: 0; color: #cbd6e5; }
+    main { max-width: 1100px; margin: 32px auto; padding: 0 20px; }
+    .subtitle { color: #667085; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin: 24px 0;
+    }
+    .card, .panel {
+      background: white;
+      border: 1px solid #e2e7ef;
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .card .name { color: #667085; font-size: 14px; }
+    .card .value { font-size: 28px; font-weight: bold; margin-top: 14px; }
+    .panel { margin-bottom: 20px; overflow-x: auto; }
+    .panel h2 { font-size: 19px; margin: 0 0 20px; }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 75px 1fr 60px;
+      align-items: center;
+      gap: 12px;
+      margin: 13px 0;
+      font-size: 14px;
+    }
+    .bar-bg { background: #e9edf4; border-radius: 5px; height: 20px; }
+    .bar { background: #476fba; height: 100%; border-radius: 5px; }
+    table { width: 100%; border-collapse: collapse; text-align: right; }
+    th, td { padding: 13px 10px; border-bottom: 1px solid #eef0f4; }
+    th { background: #f7f9fc; color: #526071; }
+    th:first-child, td:first-child { text-align: left; }
+    .note { font-size: 13px; color: #667085; line-height: 1.8; }
+    #error { color: #bf3030; }
+    @media (max-width: 700px) {
+      .cards { grid-template-columns: repeat(2, 1fr); }
+      .card { padding: 16px; }
+      .card .value { font-size: 23px; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>RentWatch Seoul</h1>
+    <p>전월세 실거래 데이터 기반 취재 분석</p>
+  </header>
+
+  <main>
+    <h1>데이터 분석</h1>
+    <p class="subtitle">서울 관악구 · 오피스텔 · 2025.10 ~ 2026.09</p>
+    <p id="error"></p>
+
+    <section class="cards">
+      <div class="card">
+        <div class="name">전체 거래</div>
+        <div class="value" id="total">-</div>
+      </div>
+      <div class="card">
+        <div class="name">전세 거래</div>
+        <div class="value" id="jeonse">-</div>
+      </div>
+      <div class="card">
+        <div class="name">월세 거래</div>
+        <div class="value" id="wolse">-</div>
+      </div>
+      <div class="card">
+        <div class="name">월세 비중</div>
+        <div class="value" id="share">-</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>월별 전체 거래 건수</h2>
+      <div id="chart">데이터 불러오는 중...</div>
+    </section>
+
+    <section class="panel">
+      <h2>월별 거래 통계</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>계약월</th>
+            <th>전체</th>
+            <th>전세</th>
+            <th>월세</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </section>
+
+    <p class="note">
+      자료: 국토교통부 오피스텔 전월세 실거래가 공개자료<br>
+      수집 시점 기준 신고 자료이며 지연 신고·정정으로 건수가 달라질 수 있습니다.<br>
+      월세가 0원인 거래를 전세, 0원보다 큰 거래를 월세로 분류했습니다.
+    </p>
+  </main>
+
+  <script>
+    const fmt = number => Number(number).toLocaleString("ko-KR");
+
+    async function loadStatistics() {
+      try {
+        const response = await fetch("/api/statistics");
+
+        if (!response.ok) {
+          throw new Error("통계 API 응답 오류: " + response.status);
+        }
+
+        const data = await response.json();
+
+        document.getElementById("total").textContent = fmt(data.total) + "건";
+        document.getElementById("jeonse").textContent = fmt(data.jeonse) + "건";
+        document.getElementById("wolse").textContent = fmt(data.wolse) + "건";
+        document.getElementById("share").textContent = data.wolse_share.toFixed(2) + "%";
+
+        const chart = document.getElementById("chart");
+        const tbody = document.getElementById("table-body");
+
+        chart.replaceChildren();
+        tbody.replaceChildren();
+
+        const max = Math.max(1, ...data.monthly.map(row => row.total));
+
+        for (const item of data.monthly) {
+          const row = document.createElement("div");
+          row.className = "chart-row";
+
+          const month = document.createElement("span");
+          month.textContent = item.month;
+
+          const background = document.createElement("div");
+          background.className = "bar-bg";
+
+          const bar = document.createElement("div");
+          bar.className = "bar";
+          bar.style.width = (item.total / max * 100) + "%";
+          background.appendChild(bar);
+
+          const count = document.createElement("strong");
+          count.textContent = fmt(item.total);
+
+          row.append(month, background, count);
+          chart.appendChild(row);
+
+          const tr = document.createElement("tr");
+
+          for (const value of [
+            item.month,
+            fmt(item.total),
+            fmt(item.jeonse),
+            fmt(item.wolse)
+          ]) {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+          }
+
+          tbody.appendChild(tr);
+        }
+
+        if (data.monthly.length === 0) {
+          chart.textContent = "조회된 거래 데이터가 없습니다.";
+        }
+      } catch (error) {
+        document.getElementById("error").textContent =
+          "데이터를 불러오지 못했습니다: " + error.message;
+      }
+    }
+
+    loadStatistics();
+  </script>
+</body>
+</html>
+
+# ===== S02 Fact Sheet 조회 API =====
+
+@app.get("/api/fact-sheets/{fact_sheet_id}")
+def read_fact_sheet(fact_sheet_id: int):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT
+                    id,
+                    topic,
+                    region_code,
+                    property_type,
+                    period_start,
+                    period_end,
+                    facts_json,
+                    evidence_json,
+                    verification_status,
+                    created_at
+                FROM fact_sheets
+                WHERE id = :id
+            """),
+            {"id": fact_sheet_id},
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Fact Sheet를 찾을 수 없습니다.",
+        )
+
+    facts = row["facts_json"]
+    evidence = row["evidence_json"]
+
+    if isinstance(facts, str):
+        facts = json.loads(facts)
+
+    if isinstance(evidence, str):
+        evidence = json.loads(evidence)
+
+    transaction_ids = evidence.get("transaction_ids", [])
+
+    return {
+        "id": row["id"],
+        "topic": row["topic"],
+        "region_code": row["region_code"],
+        "property_type": row["property_type"],
+        "period_start": row["period_start"].isoformat(),
+        "period_end": row["period_end"].isoformat(),
+        "status": row["verification_status"],
+        "created_at": row["created_at"].isoformat(),
+        "facts": facts,
+        "evidence": {
+            "source_org": evidence.get("source_org"),
+            "source_url": evidence.get("source_url"),
+            "source_row_count": evidence.get("source_row_count"),
+            "transaction_id_count": len(transaction_ids),
+            "transaction_id_sample": transaction_ids[:20],
+            "collected_at_min": evidence.get("collected_at_min"),
+            "collected_at_max": evidence.get("collected_at_max"),
+            "calculation": evidence.get("calculation", {}),
+            "limitations": evidence.get("limitations", []),
+            "verification_checks": evidence.get(
+                "verification_checks", {}
+            ),
+        },
+    }
+
+
+@app.get("/fact-sheet", include_in_schema=False)
+def fact_sheet_page():
+    return FileResponse(BASE_DIR / "fact_sheet.html")

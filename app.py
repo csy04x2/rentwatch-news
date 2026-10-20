@@ -199,3 +199,125 @@ def hold_article(article_id: int, request: ReviewRequest):
         "status": "보류",
         "reviewed_by": reviewer,
     }
+
+# ===== S01 데이터 분석 화면 =====
+
+from pathlib import Path
+from fastapi.responses import FileResponse
+
+BASE_DIR = Path(__file__).resolve().parent
+
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard():
+    return FileResponse(BASE_DIR / "dashboard.html")
+
+
+@app.get("/api/statistics")
+def get_statistics():
+    query = text("""
+        SELECT
+            DATE_FORMAT(contract_date, '%Y-%m') AS month,
+            COUNT(*) AS total,
+            SUM(CASE WHEN rent_manwon = 0 THEN 1 ELSE 0 END) AS jeonse,
+            SUM(CASE WHEN rent_manwon > 0 THEN 1 ELSE 0 END) AS wolse
+        FROM rental_transactions
+        WHERE district_code = '11620'
+          AND property_type = 'OFFICETEL'
+          AND contract_date >= '2025-10-01'
+          AND contract_date < '2026-10-01'
+          AND source_row_key NOT LIKE 'SEED-SAMPLE-%'
+        GROUP BY DATE_FORMAT(contract_date, '%Y-%m')
+        ORDER BY month
+    """)
+
+    with engine.connect() as conn:
+        rows = conn.execute(query).mappings().all()
+
+    monthly = [
+        {
+            "month": row["month"],
+            "total": int(row["total"]),
+            "jeonse": int(row["jeonse"]),
+            "wolse": int(row["wolse"]),
+        }
+        for row in rows
+    ]
+
+    total = sum(row["total"] for row in monthly)
+    jeonse = sum(row["jeonse"] for row in monthly)
+    wolse = sum(row["wolse"] for row in monthly)
+
+    return {
+        "region": "서울 관악구",
+        "property_type": "오피스텔",
+        "period": "2025-10 ~ 2026-09",
+        "total": total,
+        "jeonse": jeonse,
+        "wolse": wolse,
+        "wolse_share": round(wolse / total * 100, 2) if total else 0,
+        "monthly": monthly,
+    }
+@app.get("/fact-sheet", include_in_schema=False)
+def fact_sheet_page():
+    return FileResponse(BASE_DIR / "fact_sheet.html")
+
+
+@app.get("/api/fact-sheets/{fact_sheet_id}")
+def read_fact_sheet(fact_sheet_id: int):
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT
+                    id, topic, region_code, property_type,
+                    period_start, period_end,
+                    facts_json, evidence_json,
+                    verification_status, created_at
+                FROM fact_sheets
+                WHERE id = :id
+            """),
+            {"id": fact_sheet_id},
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Fact Sheet를 찾을 수 없습니다."
+        )
+
+    facts = row["facts_json"]
+    evidence = row["evidence_json"]
+
+    if isinstance(facts, str):
+        facts = json.loads(facts)
+
+    if isinstance(evidence, str):
+        evidence = json.loads(evidence)
+
+    transaction_ids = evidence.get("transaction_ids", [])
+
+    return {
+        "id": row["id"],
+        "topic": row["topic"],
+        "region_code": row["region_code"],
+        "property_type": row["property_type"],
+        "period_start": row["period_start"].isoformat(),
+        "period_end": row["period_end"].isoformat(),
+        "status": row["verification_status"],
+        "created_at": row["created_at"].isoformat(),
+        "facts": facts,
+        "evidence": {
+            "source_org": evidence.get("source_org"),
+            "source_url": evidence.get("source_url"),
+            "source_row_count": evidence.get("source_row_count"),
+            "transaction_id_count": len(transaction_ids),
+            "transaction_id_sample": transaction_ids[:20],
+            "collected_at_min": evidence.get("collected_at_min"),
+            "collected_at_max": evidence.get("collected_at_max"),
+            "calculation": evidence.get("calculation", {}),
+            "limitations": evidence.get("limitations", []),
+            "verification_checks": evidence.get(
+                "verification_checks", {}
+            ),
+        },
+    }

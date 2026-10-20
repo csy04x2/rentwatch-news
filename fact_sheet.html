@@ -1,0 +1,313 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RentWatch Seoul | Fact Sheet</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f5f7fb;
+      color: #202938;
+      font-family: Arial, "Malgun Gothic", sans-serif;
+    }
+    header {
+      background: #172b49;
+      color: white;
+      padding: 24px max(24px, calc((100% - 1060px)/2));
+    }
+    header h1 { margin: 0 0 8px; font-size: 25px; }
+    header p { margin: 0; color: #cbd6e5; }
+    nav { margin-top: 18px; display: flex; gap: 20px; }
+    nav a { color: #cbd6e5; text-decoration: none; }
+    nav a.active { color: white; font-weight: bold; }
+    main { max-width: 1100px; margin: 32px auto; padding: 0 20px; }
+    .panel {
+      background: white;
+      border: 1px solid #e2e7ef;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+    .panel h2 { font-size: 19px; margin: 0 0 20px; }
+    .muted { color: #667085; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: white;
+      border: 1px solid #e2e7ef;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .card .label { font-size: 14px; color: #667085; }
+    .card .value {
+      margin-top: 12px;
+      font-size: 27px;
+      font-weight: bold;
+    }
+    .meta { line-height: 2; }
+    .status {
+      font-weight: bold;
+      color: #146c43;
+    }
+    .failed { color: #bf3030; }
+    .check {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #edf0f4;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid #edf0f4;
+      text-align: right;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    th { background: #f7f9fc; }
+    .table-wrap { overflow-x: auto; }
+    .note { color: #667085; font-size: 14px; line-height: 1.8; }
+    .ids { overflow-wrap: anywhere; line-height: 1.8; }
+    #error { color: #bf3030; }
+    @media (max-width: 700px) {
+      .cards { grid-template-columns: repeat(2, 1fr); }
+      .card .value { font-size: 23px; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>RentWatch Seoul</h1>
+    <p>전월세 실거래 데이터 기반 취재 분석</p>
+    <nav>
+      <a href="/dashboard">S01 데이터 분석</a>
+      <a class="active" href="/fact-sheet">S02 Fact Sheet</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Fact Sheet</h1>
+    <p class="muted">기사 작성에 사용하는 통계 수치와 검증 근거</p>
+    <p id="error"></p>
+
+    <section class="panel">
+      <h2 id="topic">Fact Sheet 불러오는 중...</h2>
+      <div class="meta">
+        Fact Sheet ID: <strong id="sheet-id">-</strong><br>
+        지역: <strong id="region">-</strong><br>
+        분석 기간: <strong id="period">-</strong><br>
+        검증 상태: <strong id="status">-</strong>
+      </div>
+    </section>
+
+    <section class="cards">
+      <div class="card">
+        <div class="label">전체 거래</div>
+        <div class="value" id="total">-</div>
+      </div>
+      <div class="card">
+        <div class="label">전세 거래</div>
+        <div class="value" id="jeonse">-</div>
+      </div>
+      <div class="card">
+        <div class="label">월세 거래</div>
+        <div class="value" id="wolse">-</div>
+      </div>
+      <div class="card">
+        <div class="label">월세 비중</div>
+        <div class="value" id="share">-</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>월별 거래 통계</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>계약월</th>
+              <th>전체</th>
+              <th>전세</th>
+              <th>월세</th>
+            </tr>
+          </thead>
+          <tbody id="monthly-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>자동 검증 결과</h2>
+      <div id="checks"></div>
+      <p class="note">
+        PASS는 저장 당시 정의된 검증 항목을 통과했다는 뜻입니다.
+        기사 내용 전체의 정확성을 보장하지는 않습니다.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>원자료와 계산 근거</h2>
+      <div class="meta">
+        출처: <strong id="source-org">-</strong><br>
+        원문: <a id="source-url" href="#" target="_blank"
+          rel="noopener noreferrer">원자료 확인</a><br>
+        근거 거래 행 수: <strong id="row-count">-</strong><br>
+        저장된 거래 ID 개수: <strong id="id-count">-</strong><br>
+        수집 시각 범위: <span id="collected">-</span>
+      </div>
+
+      <h3>거래 ID 미리보기 (최대 20개)</h3>
+      <p class="ids" id="ids">-</p>
+
+      <h3>거래 유형 분류 및 계산식</h3>
+      <div class="note" id="calculation"></div>
+    </section>
+
+    <section class="panel">
+      <h2>해석할 때 주의할 점</h2>
+      <ul class="note" id="limitations"></ul>
+    </section>
+  </main>
+
+  <script>
+    const fmt = n => Number(n).toLocaleString("ko-KR");
+
+    const checkNames = {
+      total_matches: "월별 거래 합계와 전체 건수 일치",
+      type_sum_matches: "전세와 월세 합계 일치",
+      ids_unique: "거래 ID 중복 없음",
+      months_complete: "분석 대상 12개월에 거래 존재",
+      db_counts_match: "Python 계산과 DB 집계 일치"
+    };
+
+    const calcNames = {
+      jeonse: "전세 분류",
+      wolse: "월세 분류",
+      ratio: "월세 비중 계산"
+    };
+
+    function setText(id, value) {
+      document.getElementById(id).textContent = value;
+    }
+
+    async function loadFactSheet() {
+      try {
+        const response = await fetch("/api/fact-sheets/1");
+
+        if (!response.ok) {
+          throw new Error("Fact Sheet 조회 실패: " + response.status);
+        }
+
+        const data = await response.json();
+        const facts = data.facts;
+        const evidence = data.evidence;
+
+        setText("sheet-id", data.id);
+        setText("topic", data.topic);
+        setText("region", data.region_code + " · 오피스텔");
+        setText("period", data.period_start + " ~ " + data.period_end);
+
+        const status = document.getElementById("status");
+        status.textContent = data.status;
+        status.className = data.status === "PASSED" ? "status" : "failed";
+
+        setText("total", fmt(facts.total_count) + "건");
+        setText("jeonse", fmt(facts.jeonse_count) + "건");
+        setText("wolse", fmt(facts.wolse_count) + "건");
+        setText("share", Number(facts.wolse_ratio_percent).toFixed(2) + "%");
+
+        const monthlyBody = document.getElementById("monthly-body");
+
+        for (const item of facts.monthly) {
+          const tr = document.createElement("tr");
+          for (const value of [
+            item.month,
+            fmt(item.total_count),
+            fmt(item.jeonse_count),
+            fmt(item.wolse_count)
+          ]) {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+          }
+          monthlyBody.appendChild(tr);
+        }
+
+        const checks = document.getElementById("checks");
+
+        for (const [key, passed] of Object.entries(
+          evidence.verification_checks
+        )) {
+          const row = document.createElement("div");
+          row.className = "check";
+
+          const name = document.createElement("span");
+          name.textContent = checkNames[key] || key;
+
+          const result = document.createElement("strong");
+          result.textContent = passed ? "PASS" : "FAIL";
+          result.className = passed ? "status" : "failed";
+
+          row.append(name, result);
+          checks.appendChild(row);
+        }
+
+        setText("source-org", evidence.source_org || "-");
+
+        const link = document.getElementById("source-url");
+        if (
+          evidence.source_url &&
+          evidence.source_url.startsWith("https://")
+        ) {
+          link.href = evidence.source_url;
+        } else {
+          link.removeAttribute("href");
+        }
+
+        setText("row-count", fmt(evidence.source_row_count));
+        setText("id-count", fmt(evidence.transaction_id_count));
+        setText(
+          "collected",
+          (evidence.collected_at_min || "-") +
+          " ~ " +
+          (evidence.collected_at_max || "-")
+        );
+        setText(
+          "ids",
+          evidence.transaction_id_sample.join(", ") || "-"
+        );
+
+        const calculation = document.getElementById("calculation");
+
+        for (const [key, value] of Object.entries(
+          evidence.calculation
+        )) {
+          const p = document.createElement("p");
+          p.textContent = (calcNames[key] || key) + ": " + value;
+          calculation.appendChild(p);
+        }
+
+        const limitations = document.getElementById("limitations");
+
+        for (const limitation of evidence.limitations) {
+          const li = document.createElement("li");
+          li.textContent = limitation;
+          limitations.appendChild(li);
+        }
+
+      } catch (error) {
+        setText("error", error.message);
+      }
+    }
+
+    loadFactSheet();
+  </script>
+</body>
+</html>
