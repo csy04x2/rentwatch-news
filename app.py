@@ -648,3 +648,9 @@ def get_article_sources(article_id: int):
         "fact_sheets": fact_sheets,
         "references": references,
     }
+
+# ===== 전월세 거래 CRUD API =====
+
+from transaction_crud import make_crud_router
+
+app.include_router(make_crud_router(engine))
