@@ -60,3 +60,18 @@ CREATE TABLE article_sources (
    (evidence_role='STATISTIC' AND fact_sheet_id IS NOT NULL)
    OR (evidence_role='CONTEXT' AND reference_document_id IS NOT NULL))
 ) ENGINE=InnoDB;
+
+-- 기자 검수 기록 (기존 DB에는 review_migration.sql을 별도 실행)
+
+CREATE TABLE IF NOT EXISTS review (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  article_id BIGINT NOT NULL,
+  reviewed_by VARCHAR(100) NOT NULL,
+  result ENUM('PASS','FAIL') NOT NULL,
+  checks_json JSON NOT NULL,
+  opinion TEXT NOT NULL,
+  content_hash CHAR(64) NOT NULL,
+  reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_review_article FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE RESTRICT,
+  INDEX idx_review_article_latest (article_id, id)
+) ENGINE=InnoDB;

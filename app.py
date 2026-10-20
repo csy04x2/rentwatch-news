@@ -80,14 +80,12 @@ def approve_article(article_id: int, request: ReviewRequest):
     with engine.begin() as conn:
         article = get_article(conn, article_id)
 
-        if article["status"] != "검토대기":
-            raise HTTPException(
-                409, "검토대기 기사만 승인할 수 있습니다."
-            )
+        # 사람 체크리스트 4항목의 최신 PASS와 본문 일치를 검증
+        require_approved_checklist(conn, article, reviewer)
 
         if not article["validation_passed"]:
             raise HTTPException(
-                409, "자동 검수를 통과하지 않았습니다."
+                400, "자동 검수를 통과하지 않았습니다."
             )
 
         result = article["validation_result"]
@@ -97,12 +95,12 @@ def approve_article(article_id: int, request: ReviewRequest):
 
         if not isinstance(result, dict):
             raise HTTPException(
-                409, "검수 결과가 없습니다."
+                400, "검수 결과가 없습니다."
             )
 
         if result.get("passed") is not True:
             raise HTTPException(
-                409, "검수 결과가 PASS가 아닙니다."
+                400, "검수 결과가 PASS가 아닙니다."
             )
 
         # 검수 이후 제목·본문이 바뀌었는지 확인
@@ -113,7 +111,7 @@ def approve_article(article_id: int, request: ReviewRequest):
 
         if result.get("content_hash") != current_hash:
             raise HTTPException(
-                409,
+                400,
                 "현재 기사에 대한 검수 결과가 아닙니다. "
                 "재검수가 필요합니다.",
             )
@@ -133,18 +131,18 @@ def approve_article(article_id: int, request: ReviewRequest):
 
         if len(sources) != 1:
             raise HTTPException(
-                409,
+                400,
                 "Fact Sheet가 정확히 하나 연결되어야 합니다.",
             )
 
         if sources[0]["verification_status"] != "PASSED":
             raise HTTPException(
-                409, "Fact Sheet 검증이 필요합니다."
+                400, "Fact Sheet 검증이 필요합니다."
             )
 
         if result.get("fact_sheet_id") != sources[0]["id"]:
             raise HTTPException(
-                409, "검수에 사용한 Fact Sheet가 다릅니다."
+                400, "검수에 사용한 Fact Sheet가 다릅니다."
             )
 
         # 실제 사람이 승인 API를 요청했을 때만 실행
@@ -654,3 +652,11 @@ def get_article_sources(article_id: int):
 from transaction_crud import make_crud_router
 
 app.include_router(make_crud_router(engine))
+
+# ===== 기자 체크리스트 검수 =====
+from review_checklist import make_checklist_router, require_approved_checklist
+app.include_router(make_checklist_router(engine))
+
+@app.get("/review-checklist", include_in_schema=False)
+def review_checklist_page():
+    return FileResponse(BASE_DIR / "review_checklist.html")
