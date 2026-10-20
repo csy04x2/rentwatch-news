@@ -57,7 +57,7 @@ def read_article(article_id: int):
             text("""
                 SELECT id, title, content, status,
                        validation_passed, validation_result,
-                       reviewed_by, reviewed_at
+                       reviewed_by, reviewed_at, updated_at
                 FROM articles
                 WHERE id = :id
             """),
@@ -321,3 +321,163 @@ def read_fact_sheet(fact_sheet_id: int):
             ),
         },
     }
+
+# ===== S03 기사 목록 조회 =====
+
+@app.get("/api/articles")
+def list_articles():
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT
+                    id,
+                    title,
+                    status,
+                    validation_passed,
+                    created_at,
+                    updated_at
+                FROM articles
+                ORDER BY id DESC
+            """)
+        ).mappings().all()
+
+    return [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "status": row["status"],
+            "validation_passed": bool(row["validation_passed"]),
+            "created_at": row["created_at"].isoformat(),
+            "updated_at": row["updated_at"].isoformat(),
+        }
+        for row in rows
+    ]
+
+# ===== S03 기사 편집·저장 API =====
+
+class ArticleEditRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1)
+    original_updated_at: str
+
+
+@app.put("/api/articles/{article_id}")
+def update_article(article_id: int, request: ArticleEditRequest):
+    title = request.title.strip()
+    content = request.content.strip()
+
+    if not title or not content:
+        raise HTTPException(
+            status_code=422,
+            detail="제목과 본문은 비어 있을 수 없습니다.",
+        )
+
+    if "\n" in title:
+        raise HTTPException(
+            status_code=422,
+            detail="제목은 한 줄로 작성해야 합니다.",
+        )
+
+    with engine.begin() as conn:
+        article = get_article(conn, article_id)
+
+        if article["status"] != "검토대기":
+            raise HTTPException(
+                status_code=409,
+                detail="검토대기 기사만 수정할 수 있습니다.",
+            )
+
+        # 다른 작업에서 기사를 먼저 수정했는지 확인
+        current_updated_at = article["updated_at"].isoformat()
+
+        if current_updated_at != request.original_updated_at:
+            raise HTTPException(
+                status_code=409,
+                detail="기사가 다른 작업에서 수정됐습니다. 다시 조회해 주세요.",
+            )
+
+        if (
+            article["title"] == title
+            and article["content"].strip() == content
+        ):
+            return {
+                "article_id": article_id,
+                "changed": False,
+                "message": "변경된 내용이 없습니다.",
+            }
+
+        conn.execute(
+            text("""
+                UPDATE articles
+                SET title = :title,
+                    content = :content,
+                    validation_result = NULL,
+                    validation_passed = FALSE,
+                    reviewed_by = NULL,
+                    reviewed_at = NULL,
+                    updated_at = NOW(6)
+                WHERE id = :id
+            """),
+            {
+                "id": article_id,
+                "title": title,
+                "content": content,
+            },
+        )
+
+    return {
+        "article_id": article_id,
+        "changed": True,
+        "status": "검토대기",
+        "validation_passed": False,
+        "message": "기사 수정 완료. 재검수가 필요합니다.",
+    }
+@app.get("/article-editor", include_in_schema=False)
+def article_editor_page():
+    return FileResponse(BASE_DIR / "article_editor.html")
+
+
+# ===== S03 AI 기사 초안 생성 API =====
+
+@app.post("/api/articles/generate")
+def generate_article_api():
+    from generate_article import (
+        load_fact_sheet,
+        generate_draft,
+        save_article,
+    )
+    from rag import search_documents
+
+    try:
+        fact_sheet = load_fact_sheet()
+
+        references = search_documents(
+            fact_sheet["topic"],
+            top_k=3,
+        )
+
+        if not references:
+            raise HTTPException(
+                status_code=422,
+                detail="RAG 참고문서를 찾지 못했습니다.",
+            )
+
+        draft = generate_draft(fact_sheet, references)
+        article_id = save_article(draft, references)
+
+        return {
+            "article_id": article_id,
+            "title": draft.title,
+            "status": "검토대기",
+            "validation_passed": False,
+            "message": "AI 기사 초안 생성 및 저장 완료",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        print("AI 기사 생성 실패:", repr(error))
+        raise HTTPException(
+            status_code=500,
+            detail="AI 기사 생성에 실패했습니다. 서버 로그를 확인하세요.",
+        )

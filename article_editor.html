@@ -1,0 +1,269 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RentWatch Seoul | AI 기사 작성</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f5f7fb;
+      color: #202938;
+      font-family: Arial, "Malgun Gothic", sans-serif;
+    }
+    header {
+      background: #172b49;
+      color: white;
+      padding: 24px max(24px, calc((100% - 1060px)/2));
+    }
+    header h1 { margin: 0 0 8px; font-size: 25px; }
+    header p { margin: 0; color: #cbd6e5; }
+    nav { display: flex; gap: 20px; margin-top: 18px; flex-wrap: wrap; }
+    nav a { color: #cbd6e5; text-decoration: none; }
+    nav a.active { color: white; font-weight: bold; }
+    main { max-width: 1100px; margin: 32px auto; padding: 0 20px; }
+    .panel {
+      background: white;
+      border: 1px solid #e2e7ef;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+    .muted { color: #667085; }
+    .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    select, input, textarea {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #cdd5df;
+      border-radius: 8px;
+      font: inherit;
+    }
+    textarea { min-height: 360px; resize: vertical; line-height: 1.8; }
+    label { display: block; margin: 18px 0 8px; font-weight: bold; }
+    button {
+      background: #294d88;
+      color: white;
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 22px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    .status { font-weight: bold; }
+    #message { margin-top: 15px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RentWatch Seoul</h1>
+    <p>전월세 실거래 데이터 기반 취재 분석</p>
+    <nav>
+      <a href="/dashboard">S01 데이터 분석</a>
+      <a href="/fact-sheet">S02 Fact Sheet</a>
+      <a href="/article-editor" class="active">S03 AI 기사 작성</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>AI 기사 작성</h1>
+    <p class="muted">기사 초안 조회 및 수정 · 승인·보류 기사는 읽기 전용</p>
+
+    <section class="panel">
+      <h2>기사 선택</h2>
+      <div class="row" style="margin-bottom:18px">
+  <button id="generate">AI 기사 초안 생성</button>
+  <span class="muted" id="generate-status"></span>
+</div>
+      <select id="article-select">
+        <option value="">기사 목록 불러오는 중...</option>
+      </select>
+      <p>기사 상태: <span class="status" id="status">-</span></p>
+      <p>자동 검수: <span id="validation">-</span></p>
+    </section>
+
+    <section class="panel">
+      <h2>기사 편집기</h2>
+      <label for="title">제목</label>
+      <input id="title" maxlength="500" disabled>
+
+      <label for="content">본문</label>
+      <textarea id="content" disabled></textarea>
+
+      <div class="row" style="margin-top:20px">
+        <button id="save" disabled>수정 저장</button>
+        <span class="muted">저장하면 기존 자동 검수 결과가 무효화됩니다.</span>
+      </div>
+      <p id="message"></p>
+    </section>
+  </main>
+
+  <script>
+    let currentArticle = null;
+
+    const select = document.getElementById("article-select");
+    const titleInput = document.getElementById("title");
+    const contentInput = document.getElementById("content");
+    const saveButton = document.getElementById("save");
+    const message = document.getElementById("message");
+
+    async function loadArticles() {
+      try {
+        const response = await fetch("/api/articles");
+        if (!response.ok) throw new Error("기사 목록 조회 실패");
+
+        const articles = await response.json();
+        select.replaceChildren();
+
+        for (const article of articles) {
+          const option = document.createElement("option");
+          option.value = article.id;
+          option.textContent =
+            "#" + article.id + " · " + article.title + " [" + article.status + "]";
+          select.appendChild(option);
+        }
+
+        if (articles.length > 0) {
+          await loadArticle(articles[0].id);
+        } else {
+          select.add(new Option("저장된 기사가 없습니다.", ""));
+        }
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    }
+
+    async function loadArticle(id) {
+      try {
+        message.textContent = "";
+        saveButton.disabled = true;
+        titleInput.disabled = true;
+        contentInput.disabled = true;
+        currentArticle = null;
+
+        const response = await fetch("/articles/" + id);
+        if (!response.ok) throw new Error("기사 조회 실패");
+
+        const article = await response.json();
+        currentArticle = article;
+
+        titleInput.value = article.title;
+        contentInput.value = article.content;
+
+        document.getElementById("status").textContent = article.status;
+        document.getElementById("validation").textContent =
+          article.validation_passed ? "PASS" : "미통과 또는 미검수";
+
+        const editable = article.status === "검토대기";
+        titleInput.disabled = !editable;
+        contentInput.disabled = !editable;
+        saveButton.disabled = !editable;
+
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    }
+
+    select.addEventListener("change", () => {
+      if (select.value) loadArticle(select.value);
+    });
+
+    saveButton.addEventListener("click", async () => {
+      if (!currentArticle || currentArticle.status !== "검토대기") return;
+
+      const title = titleInput.value.trim();
+      const content = contentInput.value.trim();
+
+      if (!title || !content) {
+        message.textContent = "제목과 본문을 입력해 주세요.";
+        return;
+      }
+
+      saveButton.disabled = true;
+
+      try {
+        const response = await fetch("/api/articles/" + currentArticle.id, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            content,
+            original_updated_at: currentArticle.updated_at
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            typeof result.detail === "string"
+              ? result.detail
+              : "기사 저장 실패"
+          );
+        }
+
+        alert("기사 저장이 완료됐습니다.");
+await loadArticles();
+
+      } catch (error) {
+        message.textContent = error.message;
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
+
+
+const generateButton = document.getElementById("generate");
+const generateStatus = document.getElementById("generate-status");
+
+generateButton.addEventListener("click", async () => {
+  const confirmed = confirm(
+    "Fact Sheet #1과 RAG 자료를 이용해 AI 기사 초안을 생성합니다.\n\n" +
+    "OpenAI API 비용이 발생하고 새 기사가 MySQL에 저장됩니다.\n\n" +
+    "진행하시겠습니까?"
+  );
+
+  if (!confirmed) return;
+
+  generateButton.disabled = true;
+  generateStatus.textContent = "AI 기사 생성 중입니다. 잠시 기다려 주세요.";
+
+  try {
+    const response = await fetch("/api/articles/generate", {
+      method: "POST"
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof result.detail === "string"
+          ? result.detail
+          : "AI 기사 생성에 실패했습니다."
+      );
+    }
+
+    alert("AI 기사 초안 생성이 완료됐습니다.\n기사 ID: " + result.article_id);
+
+    await loadArticles();
+
+    select.value = String(result.article_id);
+    await loadArticle(result.article_id);
+
+    generateStatus.textContent =
+      "새 기사 #" + result.article_id + "을 불러왔습니다. 자동 검수는 아직 진행되지 않았습니다.";
+
+  } catch (error) {
+    generateStatus.textContent = "오류: " + error.message;
+    alert("기사 생성 요청 결과를 확인하지 못했습니다.\n" + error.message +
+      "\n\n재시도 전에 기사 목록에서 새 기사가 생성됐는지 확인해 주세요.");
+  } finally {
+    generateButton.disabled = false;
+  }
+});
+
+    loadArticles();
+  </script>
+</body>
+</html>
