@@ -481,3 +481,170 @@ def generate_article_api():
             status_code=500,
             detail="AI 기사 생성에 실패했습니다. 서버 로그를 확인하세요.",
         )
+
+# ===== S04 자동 검수 실행 API =====
+
+@app.post("/api/articles/{article_id}/validate")
+def validate_article_api(article_id: int):
+    from datetime import datetime
+    from validate_article import (
+        load_article,
+        check_numbers,
+        check_context,
+        save_result,
+        MODEL,
+    )
+
+    # 검토대기 기사만 검수 가능
+    with engine.connect() as conn:
+        article = conn.execute(
+            text("""
+                SELECT id, status
+                FROM articles
+                WHERE id = :id
+            """),
+            {"id": article_id},
+        ).mappings().first()
+
+    if article is None:
+        raise HTTPException(404, "기사를 찾을 수 없습니다.")
+
+    if article["status"] != "검토대기":
+        raise HTTPException(
+            409, "검토대기 기사만 자동 검수할 수 있습니다."
+        )
+
+    try:
+        data = load_article(article_id)
+
+        number_issues = check_numbers(
+            data["article"],
+            data["facts"],
+        )
+
+        semantic_issues = check_context(data)
+
+        issues = number_issues + semantic_issues
+        passed = len(issues) == 0
+
+        result = {
+            "article_id": article_id,
+            "fact_sheet_id": data["fact_id"],
+            "reference_document_ids": [
+                ref["id"] for ref in data["references"]
+            ],
+            "passed": passed,
+            "checked_at": datetime.now().isoformat(),
+            "model": MODEL,
+            "number_issue_count": len(number_issues),
+            "semantic_issue_count": len(semantic_issues),
+            "issues": issues,
+            "content_hash": get_hash(
+                data["article"]["title"],
+                data["article"]["content"],
+            ),
+        }
+
+        # 검수 당시 내용이 그대로인 경우에만 저장
+        save_result(data, result)
+
+        return {
+            "article_id": article_id,
+            "status": "PASS" if passed else "FAIL",
+            "validation_passed": passed,
+            "number_issue_count": len(number_issues),
+            "semantic_issue_count": len(semantic_issues),
+            "issues": issues,
+            "message": (
+                "자동 검수가 완료됐습니다. "
+                "사람의 최종 승인은 별도로 필요합니다."
+            ),
+        }
+
+    except HTTPException:
+        raise
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
+        )
+    except Exception as error:
+        print("자동 검수 실행 오류:", repr(error))
+        raise HTTPException(
+            status_code=500,
+            detail="자동 검수 중 오류가 발생했습니다. 서버 로그를 확인하세요.",
+        )
+# ===== S04 검수·승인 화면 =====
+
+@app.get("/review", include_in_schema=False)
+def review_page():
+    return FileResponse(BASE_DIR / "review.html")
+
+# ===== S04 기사별 통계·RAG 근거 조회 =====
+
+@app.get("/api/articles/{article_id}/sources")
+def get_article_sources(article_id: int):
+    with engine.connect() as conn:
+        article = conn.execute(
+            text("""
+                SELECT id
+                FROM articles
+                WHERE id = :id
+            """),
+            {"id": article_id},
+        ).first()
+
+        if article is None:
+            raise HTTPException(
+                status_code=404,
+                detail="기사를 찾을 수 없습니다.",
+            )
+
+        rows = conn.execute(
+            text("""
+                SELECT
+                    s.evidence_role,
+                    fs.id AS fact_sheet_id,
+                    fs.topic,
+                    fs.verification_status,
+                    rd.id AS document_id,
+                    rd.title AS document_title,
+                    rd.source_org,
+                    rd.source_url,
+                    rd.content AS document_content
+                FROM article_sources AS s
+                LEFT JOIN fact_sheets AS fs
+                    ON s.fact_sheet_id = fs.id
+                LEFT JOIN reference_documents AS rd
+                    ON s.reference_document_id = rd.id
+                WHERE s.article_id = :id
+                ORDER BY s.id
+            """),
+            {"id": article_id},
+        ).mappings().all()
+
+    fact_sheets = []
+    references = []
+
+    for row in rows:
+        if row["evidence_role"] == "STATISTIC":
+            fact_sheets.append({
+                "id": row["fact_sheet_id"],
+                "topic": row["topic"],
+                "status": row["verification_status"],
+            })
+
+        elif row["evidence_role"] == "CONTEXT":
+            references.append({
+                "id": row["document_id"],
+                "title": row["document_title"],
+                "source_org": row["source_org"],
+                "source_url": row["source_url"],
+                "content": row["document_content"],
+            })
+
+    return {
+        "article_id": article_id,
+        "fact_sheets": fact_sheets,
+        "references": references,
+    }
