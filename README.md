@@ -1,187 +1,117 @@
 # RentWatch Seoul
 
-> **서울 전월세 실거래 데이터 기반 RAG·AI 기사 생성 및 검수 미니 서비스**  
-> 대상 독자: 한국의 부동산부 취재기자 · 단계: **DB 스키마·뼈대 작성** · 설계 기준: 2026-10-20
+> **서울 전월세 실거래 데이터 기반 Fact Sheet·RAG·AI 기사 작성 및 검수 웹 앱**  
+> 대상 사용자: 부동산·데이터 저널리즘 취재기자 · 개발 상태: **v0.1 핵심 구현 및 수동 통합 테스트 완료** · 최종 확인: 2026-10-20
 
 ## 목차
 1. [프로젝트 소개](#1-프로젝트-소개)
-2. [기능정의서](#2-기능정의서)
-3. [화면구성도](#3-화면구성도)
-4. [DB 설계](#4-db-설계)
-5. [데이터 수집 방법](#5-데이터-수집-방법)
+2. [구현 기능](#2-구현-기능)
+3. [화면 구성](#3-화면-구성)
+4. [데이터와 DB](#4-데이터와-db)
+5. [데이터 수집·분석·RAG 방식](#5-데이터-수집분석rag-방식)
 6. [개발 환경](#6-개발-환경)
-7. [실행 방법](#7-실행-방법)
-8. [테스트 항목](#8-테스트-항목)
+7. [로컬 실행 방법](#7-로컬-실행-방법)
+8. [검증 결과와 알려진 한계](#8-검증-결과와-알려진-한계)
+9. [확장 백로그](#9-확장-백로그)
 
 ## 1. 프로젝트 소개
 
-**RentWatch Seoul**은 국토교통부의 전월세 실거래가를 수집·저장하고, 계산된 **Fact Sheet**와 출처가 명확한 **RAG 검색 근거**를 결합해 AI 기사 초안을 작성하는 기자용 웹 앱이다. AI 결과를 원자료와 대조하고, **기자가 최종 승인하거나 보류**한다. 자동 검수에 실패한 기사의 승인은 서버에서도 차단한다.
+**RentWatch Seoul**은 공개 전월세 실거래 정보를 수집·분석하고, 검증된 수치를 AI 기사 작성의 근거로 제공하는 취재 지원 서비스다. 국토교통부 자료를 MySQL에 보관하고 Python으로 통계를 계산해 **Fact Sheet**를 만든다. 관련 참고자료를 **RAG**로 검색하여 GPT-4.1-mini에 제공하고, 기사가 생성된 뒤에는 자동 검수와 기자의 수동 검토·승인 과정을 거친다.
 
-- **도메인·뉴스 주제:** 서울 주택 전월세 거래의 지역별·시기별 변화
-- **독자:** 한국 부동산부 취재기자
-- **v0.1 초기 범위:** 서울 **관악구(11620)**, **오피스텔**, **2025년 10월~2026년 9월**(완료된 12개 계약월), 전세·월세 분리 분석
-- **향후 확장:** 서울 25개 자치구 및 아파트·연립다세대·단독다가구
-- **기사 예시:** “관악구 오피스텔 월세 거래금액, 최근 1년간 어떻게 달라졌나?” (실제 수치는 수집 후 산출)
-- **분석상 한계:** 실거래 자료는 특정 시점의 신고 자료이며 지연 신고·정정이 발생할 수 있다. 거래금액 변화가 임차인의 소득 대비 부담이나 청년 전체의 주거비 변화를 직접 뜻하지는 않는다. 보증금·면적 등 조건이 다른 월세를 무조건 합산해 대표값으로 사용하지 않는다.
+**v0.1 적용 범위**
 
-**화면 이미지 자리 (구현 후 교체):**
+- 지역: 서울 **관악구** (`11620`)
+- 주택 유형: **오피스텔**
+- 계약월: **2025년 10월~2026년 9월** (12개월)
+- 구분: 월세액 0원인 거래는 전세, 월세액이 0원보다 큰 거래는 월세
+- 사용자: 로컬 환경에서 사용하는 단일 기자(로그인·다중 권한 관리 없음)
+- 결과물: 실거래 통계 화면, Fact Sheet, 근거가 연결된 AI 기사 초안, 자동 검수 및 사람 승인·보류 화면
 
-> [스크린샷 자리] 데이터 분석 / Fact Sheet / AI 기사 작성 / 검수·승인  
-> 아직 구현되지 않았으므로 실제 화면 이미지는 첨부하지 않음.
+**검증된 분석 결과 (Fact Sheet #1, 수집 당시 스냅샷)**
 
-**전체 작업 흐름**
+| 항목 | 값 |
+|---|---:|
+| 전체 오피스텔 전월세 거래 | 4,223건 |
+| 전세 | 409건 |
+| 월세 | 3,814건 |
+| 월세 비중(거래 건수 기준) | 90.31% |
+| 분석 기간 | 2025-10~2026-09 |
+| Fact Sheet 검증 상태 | `PASSED` |
+
+이 수치는 **수집 당시 확보된 신고 자료를 대상으로 한 결과**다. 신고 지연·정정에 따라 이후 수집 결과와 차이가 날 수 있다. 전체 임대주택 재고나 임차인 전체의 주거 부담을 의미하지 않는다.
+
+### 취재 워크플로
 
 ```mermaid
 flowchart TD
-    A[도메인·뉴스 주제 선정] --> B[국토교통부 OpenAPI 데이터 수집]
-    B --> C[원본 확인·정제·MySQL 저장]
-    C --> D[Python 통계 계산·Fact Sheet 생성]
-    D --> E{Fact Sheet 검증 통과?}
-    E -->|아니오| D
-    E -->|예| F[참고자료 RAG 검색]
-    F --> G[GPT-4.1-mini 기사 초안 생성]
-    G --> H[원자료·수치·출처 자동 대조]
-    H --> I{오류 없음?}
-    I -->|아니오| J[기자 수정·재검수]
-    J --> H
-    I -->|예| K{사람 최종 검토}
-    K -->|승인| L[승인]
-    K -->|보류| M[보류]
+    A[국토교통부 OpenAPI 수집] --> B[원자료 정제·MySQL 저장]
+    B --> C[Python 통계 계산]
+    C --> D{Fact Sheet 검증}
+    D -->|FAILED| C
+    D -->|PASSED| E[RAG 참고자료 검색]
+    E --> F[GPT-4.1-mini 기사 초안 생성]
+    F --> G[Python 수치·AI 문맥 자동 검수]
+    G --> H{검수 결과}
+    H -->|FAIL| I[기사 수정·재검수]
+    I --> G
+    H -->|PASS| J[기자 원자료 확인 및 최종 판단]
+    J -->|승인| K[승인 상태 저장]
+    J -->|보류| L[보류 상태 저장]
 ```
 
-**책임 분리:** 수치·증감률은 **Python**이 계산한다. 국토교통부 원자료/Fact Sheet가 수치의 기준이며, **RAG**는 정책·법령 등 맥락을 보완한다. **LLM**은 글을 작성하며 사실을 임의로 채우지 않는다. 사람의 최종 승인 없이 자동 발행하지 않는다.
+> **주의:** `PASS`는 정의된 자동 검사를 통과했다는 뜻이지, 기사 전체의 사실관계가 검증됐다는 뜻이 아니다. 현 버전의 AI 문맥 검수에는 오탐·미탐 사례가 확인돼 있으며 장기 개선 과제로 분리했다. 사람의 검토 없이 자동 발행하지 않는다.
 
-## 2. 기능정의서
+## 2. 구현 기능
 
-| ID | 기능명 | 설명 | 입력 → 출력 |
-|---|---|---|---|
-| F01 | 뉴스 주제 선정 | 지역·기간·주택 유형·질문 지정(v0.1은 관악구 오피스텔 고정) | 조건·질문 → 분석 설정 |
-| F02 | 데이터 수집 | 국토교통부 오피스텔 전월세 API 호출 | 인증키·지역코드·계약월 → XML |
-| F03 | 데이터 정제·저장 | 금액·날짜·면적 변환, 원본 보관, 중복 방지 | XML → 거래 레코드 |
-| F04 | CRUD·오류 처리 | 거래 데이터 조회·등록·정정·삭제 테스트; 승인 근거 삭제 방지 | 요청 → 결과/오류 |
-| F05 | 통계 분석 | 전세·월세 분리, 건수·중위값·변화 계산 | 거래·조건 → 통계 |
-| F06 | Fact Sheet 검증 | 표본 수·기간·원본 ID·계산값·한계 점검 | 통계·원본 → Fact Sheet·PASS/FAIL |
-| F07 | RAG 검색 | 등록된 공공기관 참고문서에서 관련 구간 검색 | 질문 → 구간·출처 |
-| F08 | LLM 기사 생성 | Fact Sheet 및 RAG 근거로 초안 생성 | 근거·프롬프트 → 제목·본문 |
-| F09 | 자동 검수 | 수치·증감률·출처·근거 없는 인과 단정 점검 | 기사·근거 → 오류 목록·검수 결과 |
-| F10 | 기사 수정 | 기자가 초안 수정, 종전 검수 통과 무효화 | 수정 본문 → 검토대기·재검수 필요 |
-| F11 | 승인·보류 | 자동 검수 통과 + 사람 판단으로 상태 변경 | 검수·결정 → 검토대기/승인/보류 |
-| F12 | 기사 이력 | 사용된 Fact Sheet·RAG 문서·검수 결과 열람 | 기사 ID → 기사·근거·상태 |
+| 구분 | 구현 내용 | 현재 상태 |
+|---|---|---|
+| 데이터 수집 | 국토교통부 오피스텔 전월세 OpenAPI, 월별 수집·MySQL 저장 | 구현·실행 확인 |
+| 통계 분석 | 전세·월세 분리, 월별 건수·중위값·증감률 계산 | 구현·실행 확인 |
+| Fact Sheet | 통계 수치, 원천 거래 ID, 계산식, 검증 항목 저장 | 구현·검증 확인 |
+| RAG | 참고문서 등록·임베딩·유사도 검색, 출처 저장 | 구현·실행 확인 |
+| AI 기사 생성 | Fact Sheet #1 + 검색된 RAG 문서로 초안 작성 | 구현·실행 확인 |
+| 기사 편집 | 웹에서 제목·본문 수정, 기존 검수 결과 무효화 | 구현·실행 확인 |
+| 자동 검수 | Python 수치 검사 + LLM 문맥·근거 검사 | 실행 가능, **품질 한계 존재** |
+| 승인·보류 | 검수 결과·근거·본문 일치 확인, 검토자·시각 기록 | 구현·주요 경로 확인 |
+| 근거 추적 | 기사에 연결된 Fact Sheet·RAG 문서 열람 | 구현·실행 확인 |
 
-**승인 차단 규칙:** 기사 상태는 `검토대기`/`승인`/`보류` 셋뿐이다. `validation_passed=true`, 연결 Fact Sheet의 `PASSED`, 현재 본문에 대한 검수 결과, 실제 사람의 승인 요청을 모두 충족해야 승인 가능하다. 버튼 비활성화만으로 끝내지 않고 FastAPI 승인 처리 단계에서 검사한다. 자동 검수 통과가 기사 전체의 진실성을 보증하지는 않는다.
+**범위 구분:** 서버는 데이터·기사 조회, 기사 편집, 생성, 검수, 승인·보류 기능을 제공한다. 현재 S01은 저장된 데이터를 조회·시각화하는 화면으로, **화면에서 데이터 재수집이나 거래 CRUD를 수행하는 기능은 구현돼 있지 않다.** S02도 기존 Fact Sheet를 읽는 화면이며, 새 Fact Sheet 생성은 Python 스크립트에서 수행한다. v0.1의 분석 지역·기간·주택 유형은 고정돼 있다.
 
-**v0.1 비범위:** 로그인·권한 체계, 자동 발행, 이미지 생성, 무제한 뉴스 크롤링, 전국 데이터 통합.
+## 3. 화면 구성
 
-## 3. 화면구성도
+| 화면 | 경로 | 현재 제공 기능 |
+|---|---|---|
+| **S01 데이터 분석** | `/dashboard` | 관악구 오피스텔 전체·전세·월세 건수, 비중, 12개월 그래프·표 |
+| **S02 Fact Sheet** | `/fact-sheet` | 취재 질문·월별 수치·검증 5항목·출처·거래 ID 20개 미리보기 |
+| **S03 AI 기사 작성** | `/article-editor` | 기사 선택·조회·편집·저장, AI 초안 생성, 승인·보류 기사 읽기 전용 |
+| **S04 검수·승인** | `/review` | 기사 본문, 검수 PASS/FAIL·오류 목록, 연결된 Fact Sheet·RAG 문서, 승인·보류 |
 
-| 화면 ID | 화면 | 주요 구성 요소 | 주요 동작 |
-|---|---|---|---|
-| S01 | 데이터 분석 | 관악구·오피스텔 표시, 기간·전월세 조건, 수집 버튼, 거래 목록, 월별 통계 | 수집·조회·분석 |
-| S02 | Fact Sheet | 취재 질문, 계산값·단위·표본 수, 비교 기간, 원본 거래 ID, 출처, 검증 상태 | 생성·원자료 대조 |
-| S03 | AI 기사 작성 | Fact Sheet 패널, 검색된 RAG 근거·URL, 생성 버튼, 제목·본문 편집기 | 근거 검색·초안 생성·수정 |
-| S04 | 검수·승인 | 기사·근거 비교, 오류표, 검수표, 승인·보류 버튼, 기사 이력 | 재검수·승인·보류 |
+각 화면 상단 메뉴에서 S01~S04로 이동할 수 있다. S04에서 검수 실패한 기사는 S03에서 수정하고 다시 검수해야 한다. **기사 #4 등 검수 실패 사례를 임의로 PASS로 변경하지 않는다.**
 
-**화면 이동:** `S01 데이터 분석 → S02 Fact Sheet(검증 통과) → S03 AI 기사 작성 → S04 검수·승인`. 오류 시 `S04 → S03(수정) → S04(재검수)`.
+### 화면 캡처
 
-- S01: 월세·전세와 면적·보증금 조건을 구분한다.
-- S02: 계산 불가·자료 부족·신고 지연을 숨기지 않는다.
-- S03: 근거가 없는 수치·맥락을 LLM이 만들어내지 못하게 입력을 제한한다.
-- S04: 본문 수정 시 재검수를 강제하고, 실패 상태에선 승인 차단한다.
+로컬 실행 화면 캡처를 포트폴리오 정리 시 추가할 예정. 현재 저장소에는 확정된 화면 이미지 파일이 포함돼 있지 않다.
 
-## 4. DB 설계
+## 4. 데이터와 DB
 
-**MySQL 8.4 LTS, 총 5개 테이블.** PK = 행의 고유 ID, FK = 다른 테이블을 가리키는 참조. 자료형과 제약은 구현 전 초안이며 실제 오피스텔 API 필드 확인 후 조정한다.
+MySQL 데이터베이스 이름은 `rentwatch_seoul`이며, 스키마 정의는 [`db/schema.sql`](db/schema.sql)에 있다. 주요 테이블은 5개다.
 
-### 4.1 `rental_transactions` — 개별 전월세 거래
+| 테이블 | 주요 필드 | 역할 |
+|---|---|---|
+| `rental_transactions` | `id`, `district_code`, `property_type`, `contract_date`, `area_sqm`, `deposit_manwon`, `rent_manwon`, `raw_data`, `source_row_key`, `collected_at` | 개별 거래와 원본 항목 보관 |
+| `fact_sheets` | `id`, `topic`, `region_code`, `property_type`, `period_start`, `period_end`, `facts_json`, `evidence_json`, `verification_status` | 계산값·거래 ID 근거·검증 상태 |
+| `reference_documents` | `id`, `title`, `source_org`, `source_url`, `chunk_index`, `content`, `embedding` | RAG 문서 구간과 출처 |
+| `articles` | `id`, `title`, `content`, `status`, `validation_result`, `validation_passed`, `reviewed_by`, `reviewed_at`, `updated_at` | 기사 본문·검수·검토 기록 |
+| `article_sources` | `article_id`, `fact_sheet_id`, `reference_document_id`, `evidence_role` | 기사와 통계·맥락 근거 연결 |
 
-| 컬럼 | 타입 | 키/제약 | 설명 |
-|---|---|---|---|
-| id | BIGINT | PK, AUTO_INCREMENT | 내부 거래 ID |
-| property_type | VARCHAR(30) | NOT NULL | 초기 `OFFICETEL` |
-| district_code | CHAR(5) | NOT NULL | 초기 `11620` |
-| district_name | VARCHAR(50) | NOT NULL | 관악구 |
-| building_name | VARCHAR(200) | NULL | 건물명(제공 시) |
-| contract_date | DATE | NOT NULL | 계약일 |
-| area_sqm | DECIMAL(10,2) | NOT NULL, > 0 | 면적 |
-| deposit_manwon | BIGINT | NOT NULL, >= 0 | 보증금(만원) |
-| rent_manwon | BIGINT | NOT NULL, >= 0 | 월세(만원) |
-| floor_no | SMALLINT | NULL | 층수 |
-| raw_data | JSON | NOT NULL | 원본 항목 |
-| source_row_key | VARCHAR(128) | UNIQUE, NOT NULL | 재수집 중복 방지용 식별 키 |
-| collected_at | DATETIME | NOT NULL | 수집 시각 |
-
-**주의:** 동일한 계약일·금액·면적이 실제로 별개의 거래일 수 있다. API에서 고유 거래 ID가 확인되지 않으면 안전한 식별·재수집 전략을 샘플로 결정하기 전까지 자동 중복 제거를 확정하지 않는다. 과거 수집 결과와 기사 근거를 훼손하는 임의 삭제는 피한다.
-
-### 4.2 `reference_documents` — RAG 참고문서 구간
-
-| 컬럼 | 타입 | 키/제약 | 설명 |
-|---|---|---|---|
-| id | BIGINT | PK, AUTO_INCREMENT | 구간 ID |
-| title | VARCHAR(300) | NOT NULL | 제목 |
-| source_org | VARCHAR(100) | NOT NULL | 발행기관 |
-| source_url | TEXT | NOT NULL | 원문 링크 |
-| published_at | DATE | NULL | 발행일 |
-| chunk_index | INT | NOT NULL, >= 0 | 문서 내 구간 |
-| content | TEXT | NOT NULL | 검색할 본문 |
-| embedding | JSON | NULL | 임베딩 벡터 |
-| collected_at | DATETIME | NOT NULL | 등록 시각 |
-
-### 4.3 `fact_sheets` — 계산 결과와 검증
-
-| 컬럼 | 타입 | 키/제약 | 설명 |
-|---|---|---|---|
-| id | BIGINT | PK, AUTO_INCREMENT | Fact Sheet ID |
-| topic | VARCHAR(300) | NOT NULL | 취재 질문 |
-| region_code | CHAR(5) | NOT NULL | 분석 지역 |
-| property_type | VARCHAR(30) | NOT NULL | 주택 유형 |
-| period_start | DATE | NOT NULL | 분석 시작 |
-| period_end | DATE | NOT NULL, >= period_start | 분석 끝 |
-| query_filters | JSON | NOT NULL | 전월세·면적·보증금 등 |
-| facts_json | JSON | NOT NULL | 수치·단위·표본 수·변화 |
-| evidence_json | JSON | NOT NULL | 거래 ID, 계산식, 출처, 수집 시점 |
-| verification_status | ENUM('PENDING','PASSED','FAILED') | NOT NULL, 기본 PENDING | 기초 검증 상태 |
-| created_at | DATETIME | NOT NULL | 생성 시각 |
-
-### 4.4 `articles` — 기사·상태
-
-| 컬럼 | 타입 | 키/제약 | 설명 |
-|---|---|---|---|
-| id | BIGINT | PK, AUTO_INCREMENT | 기사 ID |
-| title | VARCHAR(500) | NOT NULL | 제목 |
-| content | LONGTEXT | NOT NULL | 본문 |
-| status | ENUM('검토대기','승인','보류') | NOT NULL, 기본 '검토대기' | 기사 상태 |
-| generated_model | VARCHAR(100) | NOT NULL | GPT 모델명 |
-| prompt_version | VARCHAR(50) | NOT NULL | 프롬프트 버전 |
-| validation_result | JSON | NULL | 검수 결과 |
-| validation_passed | BOOLEAN | NOT NULL, 기본 FALSE | 현재 본문에 대한 통과 여부 |
-| reviewed_by | VARCHAR(100) | NULL | 검토자 |
-| reviewed_at | DATETIME | NULL | 검토 시각 |
-| created_at | DATETIME | NOT NULL | 생성 시각 |
-| updated_at | DATETIME | NOT NULL | 수정 시각 |
-
-### 4.5 `article_sources` — 기사별 사용 근거
-
-| 컬럼 | 타입 | 키/제약 | 설명 |
-|---|---|---|---|
-| id | BIGINT | PK, AUTO_INCREMENT | 연결 ID |
-| article_id | BIGINT | FK → articles.id, NOT NULL | 기사 |
-| fact_sheet_id | BIGINT | FK → fact_sheets.id, NULL | 수치 근거 |
-| reference_document_id | BIGINT | FK → reference_documents.id, NULL | RAG 맥락 근거 |
-| evidence_role | VARCHAR(30) | NOT NULL | STATISTIC 또는 CONTEXT |
-| created_at | DATETIME | NOT NULL | 연결 시각 |
-
-`fact_sheet_id`와 `reference_document_id`는 **정확히 하나만 채운다**(CHECK 제약). 기사 1건에 여러 근거를 연결할 수 있다. Fact Sheet는 `evidence_json`에 계산에 쓰인 거래 ID 목록을 보존한다. 원천 거래 ↔ Fact Sheet 관계는 실제 FK가 아닌 **논리적 연결**이므로 생성·검증 시 해당 거래 ID 존재 여부를 확인해야 한다.
-
-### 4.6 ERD
+`article_sources`는 `STATISTIC`이면 Fact Sheet, `CONTEXT`이면 RAG 문서를 참조한다. 기사와 Fact Sheet는 FK로, Fact Sheet와 원천 거래는 `evidence_json.transaction_ids`의 거래 ID 목록으로 논리적으로 연결한다. 연결된 근거는 삭제 제약을 두어 보존한다.
 
 ```mermaid
 erDiagram
     rental_transactions {
         BIGINT id PK
-        VARCHAR property_type
         CHAR district_code
         DATE contract_date
-        DECIMAL area_sqm
         BIGINT deposit_manwon
         BIGINT rent_manwon
         JSON raw_data
@@ -189,23 +119,18 @@ erDiagram
     }
     fact_sheets {
         BIGINT id PK
-        VARCHAR topic
-        CHAR region_code
-        JSON query_filters
         JSON facts_json
         JSON evidence_json
         VARCHAR verification_status
     }
     reference_documents {
         BIGINT id PK
-        VARCHAR title
         TEXT source_url
         TEXT content
         JSON embedding
     }
     articles {
         BIGINT id PK
-        VARCHAR title
         LONGTEXT content
         VARCHAR status
         JSON validation_result
@@ -216,107 +141,184 @@ erDiagram
         BIGINT article_id FK
         BIGINT fact_sheet_id FK
         BIGINT reference_document_id FK
-        VARCHAR evidence_role
     }
-    rental_transactions }o..o{ fact_sheets : "evidence_json IDs (logical)"
-    articles ||--o{ article_sources : contains
-    fact_sheets |o--o{ article_sources : supports
-    reference_documents |o--o{ article_sources : supports
+    rental_transactions }o..o{ fact_sheets : "evidence_json transaction IDs"
+    articles ||--o{ article_sources : has
+    fact_sheets |o--o{ article_sources : statistics
+    reference_documents |o--o{ article_sources : context
 ```
 
-**근거 보존:** 승인 기사에 연결된 Fact Sheet·문서는 임의 삭제하지 않는다. 본문이나 근거가 수정되면 기존 검수 통과 결과를 무효화하고 재검수한다.
+**데이터 중복·정정 주의:** API에 공개된 고유 거래 ID가 없어, 같은 계약일·금액·면적을 가진 행이 실제로 별개의 거래일 수 있다. 수집 프로그램은 조건이 같은 행도 별도 행으로 보존하며, 이미 수집된 계약월을 재실행할 때는 덮어쓰지 않는다. 이는 **프로젝트 자체의 처리 방식**이지 국토교통부의 공식 중복 판정 규칙이 아니다. 추후 정정 거래 식별·재수집 정책은 개선 여지가 있다.
 
-## 5. 데이터 수집 방법
+## 5. 데이터 수집·분석·RAG 방식
 
-| 대상 | 출처 | 형식 | 주요 항목 | 사용 |
-|---|---|---|---|---|
-| **v0.1 오피스텔 전월세 실거래가** | [국토교통부 공공데이터포털](https://www.data.go.kr/data/15126475/openapi.do) | OpenAPI / XML | 지역코드, 계약일, 면적, 보증금, 월세, 층수 등(실제 필드명 확인 예정) | 통계·Fact Sheet |
-| 향후 아파트 | [국토교통부 API](https://www.data.go.kr/data/15126474/openapi.do) | OpenAPI / XML | 주택 유형별 거래 자료 | 범위 확장 |
-| 향후 연립·다세대 | [국토교통부 API](https://www.data.go.kr/data/15126473/openapi.do) | OpenAPI / XML | 주택 유형별 거래 자료 | 범위 확장 |
-| 향후 단독·다가구 | [국토교통부 API](https://www.data.go.kr/data/15126472/openapi.do) | OpenAPI / XML | 주택 유형별 거래 자료 | 범위 확장 |
-| 정책·법령 참고자료 | 국토교통부·국가법령정보센터 등 원문 | PDF / HTML / TXT | 본문, 발행기관·일자·URL | RAG 맥락 근거 |
+### 공공 데이터
 
-**초기 데이터 수집:** 법정동 지역코드 **11620**(관악구)와 계약월 **202510~202609**를 사용하여 월별로 조회한다. API 호출 전 인증키 발급·서비스별 응답 형식·페이지네이션·정정/중복 식별 가능 여부를 **실제 응답으로 확인**한다. “실시간 갱신” 안내와 무관하게 신고 지연·정정 가능성을 표시한다.
+- 원천: [국토교통부 오피스텔 전월세 실거래가 OpenAPI](https://www.data.go.kr/data/15126475/openapi.do)
+- 조회 조건: 관악구 코드 `11620`, 계약월 `202510`~`202609`
+- 처리: 월별 API 응답 XML 파싱 → 날짜·금액·면적 정규화 → `raw_data`와 함께 MySQL 저장
+- 분석 시 `source_row_key LIKE 'SEED-SAMPLE-%'`인 가상 테스트 거래 5건은 제외
+- 계약일 기준으로 전세(`rent_manwon = 0`)·월세(`rent_manwon > 0`) 거래를 월별 집계
 
-**수집 처리:** API 요청 → 응답코드·오류 검사 → XML 파싱 → 날짜·금액·면적 정규화 → 원본 JSON 보관 → 중복/정정 판단 → MySQL 저장 → 수집 건수·오류 건수 표시. 같은 달 재조회 시 이미 승인된 기사의 근거를 훼손하지 않는다.
+**Fact Sheet #1 월별 거래 건수**
 
-**Fact Sheet 계산:** 전세·월세를 나누어 거래 건수·중위값·변화율(비교 가능 시)을 Python으로 계산한다. 월세 분석에는 보증금·면적 조건과 표본 수를 표시한다. 전년 동월 비교는 **비교 연월의 데이터가 실제 확보된 경우에만** 제공한다(초기 12개월 수집만으로는 모든 달의 전년 동월 비교가 불가능함).
+| 계약월 | 전체 | 전세 | 월세 |
+|---|---:|---:|---:|
+| 2025-10 | 248 | 27 | 221 |
+| 2025-11 | 332 | 29 | 303 |
+| 2025-12 | 487 | 45 | 442 |
+| 2026-01 | 509 | 52 | 457 |
+| 2026-02 | 431 | 39 | 392 |
+| 2026-03 | 381 | 46 | 335 |
+| 2026-04 | 277 | 26 | 251 |
+| 2026-05 | 328 | 29 | 299 |
+| 2026-06 | 323 | 41 | 282 |
+| 2026-07 | 363 | 32 | 331 |
+| 2026-08 | 329 | 27 | 302 |
+| 2026-09 | 215 | 16 | 199 |
+| **합계** | **4,223** | **409** | **3,814** |
 
-**RAG:** 공신력 있는 참고자료의 본문 추출 → 구간(chunk) 분리 → 임베딩 생성 → MySQL에 저장 → Python에서 의미적 유사도 검색 → 발행기관·원문 URL과 함께 LLM 입력. 작은 초기 문서 집합에서는 별도 벡터 DB를 사용하지 않는다. 검색 결과가 원천 실거래 수치를 덮어쓰지 않는다.
+Fact Sheet는 Python 계산값과 별도 DB 월별 집계, 전체·유형별 합계, 원천 거래 ID 고유성, 월별 데이터 존재 여부를 확인한다. **`PASSED`는 위 검증 절차를 통과했다는 뜻**이다.
 
-**검수:** 기사 숫자·단위·증감률·지역·기간을 Fact Sheet 및 거래 원본과 비교하고, 인과관계나 출처의 과도한 단정은 기자 검토 대상으로 표시한다. 근거가 없는 주장은 삭제 또는 보류한다.
+### RAG 참고자료
+
+초기 RAG 문서에는 국토교통부 API의 자료 제공 방식과 정보 비공개 범위 등에 대한 설명을 등록했다. `rag.py`가 임베딩과 유사도 검색을 수행하며, 검색된 문서 ID·기관·원문 링크가 기사 근거로 기록된다. **현재는 공공정책을 자동으로 크롤링·분석하는 기능이 아니다.** 관련 정책 자료 자동 수집은 후속 백로그로 분리했다.
 
 ## 6. 개발 환경
 
-| 구분 | 기술 / 계획 버전 | 용도 |
-|---|---|---|
-| OS·편집기 | Windows / VS Code | 로컬 개발 |
-| Python | 3.11 이상 | 서버·데이터 처리 |
-| 백엔드 | FastAPI + Uvicorn | API·승인 로직 |
-| DB | MySQL 8.4 LTS | 원천·기사·근거 |
-| ORM·접속 | SQLAlchemy 2.x + PyMySQL | DB 연결 |
-| LLM | OpenAI `gpt-4.1-mini` | 기사 생성 |
-| 임베딩 | `text-embedding-3-small` | RAG 검색 |
-| 화면 | HTML / CSS / JavaScript | UI |
-| 개발 기록 | Git / GitHub | 버전 관리 |
-
-**예정 Python 라이브러리:** `fastapi`, `uvicorn`, `requests`, `pandas`, `sqlalchemy`, `pymysql`, `openai`, `python-dotenv`, `pydantic`, `numpy`, `pypdf`, `pytest`. XML 파싱은 Python 표준 라이브러리 우선 사용. 실제 설치 후 세부 버전을 고정한다.
-
-**`.env` 환경변수명 (값은 코드/README에 기록하지 않음)**
-
-| 이름 | 용도 |
+| 구분 | 사용 기술 |
 |---|---|
-| `MOLIT_API_KEY` | 국토교통부 공공데이터포털 인증키 |
-| `OPENAI_API_KEY` | OpenAI 인증키 |
-| `OPENAI_MODEL` | `gpt-4.1-mini` |
-| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` |
-| `DATABASE_URL` | MySQL 연결 문자열 |
-| `APP_ENV` | 개발 환경 식별 |
+| OS·편집기 | Windows / VS Code |
+| 실행 언어 | Python (개발 환경에서 3.14로 실행 확인) |
+| 서버 | FastAPI + Uvicorn |
+| DB | MySQL / SQLAlchemy 2.x / PyMySQL |
+| 데이터 처리 | `requests`, `pandas`, Python 표준 XML 처리 등 |
+| LLM | OpenAI `gpt-4.1-mini` (기본 설정) |
+| 임베딩 | `text-embedding-3-small` (기본 설정) |
+| 화면 | HTML / CSS / JavaScript |
+| 코드 관리 | Git / GitHub |
 
-**보안:** `.env`는 Git에서 제외한다. 키는 README나 커밋에 포함하지 않는다. 초기에는 로컬 단일 기자 사용을 전제로 하며 로그인·다중 권한 관리는 범위 밖이다.
+필요 패키지는 [`requirements.txt`](requirements.txt)에 명시되어 있다. 정확한 재현을 위한 버전 잠금 파일과 자동 배포 환경은 아직 제공하지 않는다.
 
-## 7. 실행 방법
+`.env.example`을 복사해 로컬 `.env`를 만들고 본인 환경의 값을 입력한다.
 
-### DB 초기화 (현재 구현된 범위)
+| 환경변수 | 용도 |
+|---|---|
+| `MOLIT_API_KEY` | 국토교통부 API 인증키 |
+| `OPENAI_API_KEY` | OpenAI API 키 |
+| `OPENAI_MODEL` | 기사 생성·검수 모델(기본 `gpt-4.1-mini`) |
+| `OPENAI_EMBEDDING_MODEL` | 임베딩 모델(기본 `text-embedding-3-small`) |
+| `DATABASE_URL` | MySQL 접속 문자열 |
+| `APP_ENV` | 개발 환경 구분 |
 
-MySQL 8.4 서버가 실행 중이어야 한다. `db/schema.sql`은 데이터베이스 `rentwatch_seoul`과 5개 테이블을 생성하며, `db/seed.sql`은 **실제 거래가 아닌 가상 샘플 5건**을 추가한다.
+**보안:** 실제 키와 DB 비밀번호가 포함된 `.env`는 Git에 커밋하지 않는다. 이 프로젝트의 웹 승인 API는 로컬 단일 사용자용이며 `reviewed_by` 이름 입력이 실제 신원 인증을 의미하지 않는다. 외부에 서버를 공개 운영하려면 인증·권한·보안 보강이 필요하다.
 
-**방법 A — MySQL Workbench:** MySQL 서버에 접속 → **File > Open SQL Script**에서 `db/schema.sql` 열기 → 번개 모양 **Execute** 클릭. 테스트가 필요하면 `db/seed.sql`도 같은 방법으로 실행한다.
+## 7. 로컬 실행 방법
 
-**방법 B — MySQL CLI(cmd.exe 또는 bash):** 저장소 루트에서 실행한다.
-
-```cmd
-mysql -u root -p < db/schema.sql
-mysql -u root -p < db/seed.sql
-```
-
-**Windows PowerShell:** 위의 `<` 리다이렉션 문법은 PowerShell에서 바로 실행되지 않을 수 있으므로 아래 명령을 사용한다.
+### 7.1 설치 및 DB 준비
 
 ```powershell
-cmd /c "mysql -u root -p < db/schema.sql"
-cmd /c "mysql -u root -p < db/seed.sql"
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-`db` 폴더에서 실행하는 경우(cmd.exe) `mysql -u root -p < schema.sql`도 가능하다. `mysql` 명령이 실행되지 않으면 설치 및 PATH 설정을 확인한다.
+`.env`에 필요한 API 키와 MySQL 접속 문자열을 입력한다. MySQL 서버를 켜고 `db/schema.sql`을 **MySQL Workbench**에서 실행하면 데이터베이스 및 테이블을 생성할 수 있다. `db/seed.sql`은 선택적인 **가상 거래 5건**을 입력하므로 실제 분석 데이터와 혼동하지 않는다. 이미 운영 중인 로컬 DB에는 초기화 스크립트를 무심코 재실행하지 않는다.
 
-**결과 확인 (Workbench SQL Editor):**
+### 7.2 자료 수집·분석 (초기 DB를 준비할 때)
 
-```sql
-USE rentwatch_seoul;
-SHOW TABLES;
-SELECT COUNT(*) AS sample_count FROM rental_transactions
-WHERE source_row_key LIKE 'SEED-SAMPLE-%';
+저장소 루트에서 다음 스크립트를 실행한다.
+
+```powershell
+python collect_transactions.py
+python analyze_transactions.py
+python create_fact_sheet.py
 ```
 
-예상 결과는 테이블 **5개**, 샘플 삽입 후 **5건**이다. 샘플은 `raw_data.sample=true` 또는 `SEED-SAMPLE-` 접두어로 구분한다. **실제 통계 및 기사에 가상 거래를 포함하면 안 된다.**
+수집 대상은 현재 스크립트에 고정된 지역·계약월 기준이다. `create_fact_sheet.py`를 재실행하면 새 Fact Sheet가 생성될 수 있으므로 기존 기사에서 참조하는 **Fact Sheet #1을 임의 교체하거나 삭제하지 않는다.**
 
-Python 의존성은 추후 `pip install -r requirements.txt`로 설치하며, `.env.example`을 복사한 `.env`에 본인 인증키 및 DB 비밀번호를 입력한다. `.env`는 Git에서 제외된다.
+RAG 등록·검색 명령은 다음과 같다. 임베딩 생성과 의미 검색에는 OpenAI API 비용이 발생한다. 참고문서가 등록되지 않으면 AI 기사 생성이 진행되지 않는다.
 
-**미구현:** 실제 API 수집, DB 접속 코드, CRUD, 기사 생성 및 승인 서버 로직. DB CHECK는 승인 기록의 기초 조건만 검사한다. Fact Sheet 상태·현재 본문 검수·실제 사람 승인 요청은 향후 FastAPI에서 검증한다. `source_row_key` 생성 방식은 실제 API 응답 확인 후 결정한다.
+```powershell
+python rag.py ingest
+python rag.py search "오피스텔 전월세 자료의 공개 기준"
+```
 
+### 7.3 웹 서버 실행
 
-## 8. 테스트 항목
+```powershell
+python -m uvicorn app:app --reload
+```
 
-**작성 예정** — 테스트 코드 및 실행 결과는 구현 후 추가한다.
+실행 후 브라우저에서 아래 URL을 연다. **배포된 공개 서비스 주소가 아니라 현재 컴퓨터의 로컬 서버**다.
 
-예정 검증 범위: API 정상/오류 응답, 수집 건수·중복·정정, MySQL CRUD·오류 처리, Fact Sheet 계산 원본 대조, RAG 출처 확인, AI 기사 수치·인과 단정·출처 검수, 본문 수정 후 재검수, **검수 실패 승인 차단**, 사람 최종 승인/보류, 기사별 원천 근거 추적.
+- S01 데이터 분석: http://127.0.0.1:8000/dashboard
+- S02 Fact Sheet: http://127.0.0.1:8000/fact-sheet
+- S03 AI 기사 작성: http://127.0.0.1:8000/article-editor
+- S04 검수·승인: http://127.0.0.1:8000/review
+- FastAPI 개발용 API 문서: http://127.0.0.1:8000/docs
+
+### 7.4 웹에서 기사 작업하기
+
+1. **S01**에서 수집된 거래 통계를 확인한다.
+2. **S02**에서 Fact Sheet #1의 수치·검증 상태·출처를 확인한다.
+3. **S03**에서 **AI 기사 초안 생성**을 누르면 RAG 검색과 OpenAI API 호출이 실행되고 새 기사가 `검토대기`로 저장된다. API 비용이 발생한다.
+4. **S03**에서 제목·본문을 수정하면 저장된 자동 검수 결과가 무효화된다. `승인`·`보류` 기사는 현재 편집기에서 읽기 전용이다.
+5. **S04**에서 기사와 연결된 Fact Sheet·RAG 원문을 확인하고 자동 검수를 실행한다. AI 검수에도 API 비용이 발생한다.
+6. 검수 통과 시 사람이 원문 및 근거를 점검한 뒤 **승인**하거나 **보류**할 수 있다. FAIL 또는 미검수 기사는 서버에서 승인 거부된다.
+
+개발용 터미널 워크플로도 존재한다: `generate_article.py`, `validate_article.py <기사ID>`, `edit_article.py export <기사ID>` / `edit_article.py save <기사ID>`.
+
+## 8. 검증 결과와 알려진 한계
+
+### 수동 통합 테스트 (2026-10-20)
+
+| 검증 내용 | 확인 결과 |
+|---|---|
+| S01 월별 거래 통계 및 전체 건수 대조 | 4,223건·전세 409건·월세 3,814건 일치 |
+| S02 Fact Sheet 표시 | #1, `PASSED`, 근거·검증 항목 확인 |
+| S03 기사 생성·편집·DB 저장 | 실행 확인 |
+| 수정 후 종전 검수 무효화 | 실행 확인 |
+| S04 기사별 검수 결과·Fact Sheet·RAG 조회 | 실행 확인 |
+| S04 자동 검수 실행 | 실행 확인(PASS 및 FAIL 사례 존재) |
+| 검수 실패 기사 승인 차단 | FastAPI API에서 확인 |
+| 검수 PASS 기사 승인 | FastAPI API에서 확인, 검토자·시각 DB 기록 |
+| 웹 보류 버튼 및 DB 기록 | 실행 확인 |
+| 웹 승인 버튼의 활성화 조건 | 표시 확인, **웹 승인 성공 경로는 별도 미실행** |
+| S01~S04 화면 이동 | 실행 확인 |
+
+**로컬 테스트 기사 예시 (사용자의 실행 DB 기준)**
+
+- #1: `검토대기`, 본문 수정으로 기존 검수 결과 무효화
+- #2: `보류`, 검토자·시각 기록
+- #3: `승인`, 자동 검수 PASS, 검토자·시각 기록
+- #4: `검토대기`, 자동 검수 FAIL (오탐 사례)
+- #5: `보류`, S04 웹에서 처리
+
+테스트 기사 ID와 DB 상태는 **개발자 로컬 MySQL의 결과**로, Git 저장소를 클론하면 자동으로 재현되는 샘플 데이터가 아니다.
+
+### 알려진 한계
+
+1. **AI 검수 품질:** 올바른 수치를 오류로 판단하거나, 실제 없는 출처 혼동을 지적하는 오탐과, 부정확한 추세·법률 설명을 놓치는 미탐이 확인됐다. 현재 `PASS`와 `FAIL`은 검수 엔진의 판정이며 사람의 사실 확인을 대체하지 않는다.
+2. **Python 수치 검사 범위:** 현재 정규식은 일부 표현 형식만 인식한다. 검사가 포착하지 못한 숫자 문장을 정확하다고 보장하지 않는다.
+3. **검수 승인 운영:** 자동 검수 FAIL을 사람이 검토해도 현 시스템은 예외 승인을 지원하지 않는다. 잘못된 FAIL을 임의로 PASS로 변경해서 승인하지 않는다.
+4. **자료 시차·중복·정정:** 데이터는 수집 시점의 스냅샷이다. API가 공개 고유 거래 ID를 제공하지 않으며 신고 지연·정정, 동일 조건 거래의 식별에 한계가 있다.
+5. **고정 분석 범위:** v0.1의 지역·유형·기간 및 기사 생성에 사용되는 Fact Sheet는 코드에서 고정돼 있다. 웹에서 자유롭게 조건을 바꾸거나 새 Fact Sheet를 생성하는 기능은 없다.
+6. **보안·배포:** 로그인·권한·공개 배포·자동 발행 기능은 없고, 로컬 개발용 단일 사용자 워크플로를 전제로 한다.
+
+## 9. 확장 백로그
+
+### A. AI 자동 검수 정확도 개선
+
+**장기 품질 개선 과제.** Python이 검증 가능한 수치와 LLM이 검토할 문맥·근거의 책임을 분리하고, 검수기의 개별 오류 주장을 다시 검증하는 체계를 설계한다. 사람 라벨링 기반 오탐·미탐 평가셋, 회귀 테스트, 오류/검토 필요/개선 제안의 판정 단계 구분 등을 검토한다. 기존의 재검수 강제·승인 차단·사람 최종 판단 규칙은 유지한다.
+
+### B. 부동산 정책자료 자동 수집 및 거래 통계 연계 분석
+
+국토교통부 등 공식기관의 정책·법령 자료를 자동으로 수집하고 적용 대상(지역·주택 유형·시점)을 구조화하여 실거래 통계와 함께 취재 질문을 발굴하는 확장 기능을 검토한다. 정책과 거래량 사이의 인과관계는 단순한 시점 일치만으로 단정하지 않는다. 현재 v0.1의 **수동 등록 RAG와 구분**한다.
+
+### C. 분석·운영 범위 확대
+
+서울 다른 자치구 및 아파트·연립다세대·단독다가구 자료로 확대하고, 필터·재수집·정정 처리·원자료 대조·인증 체계를 보강한다. 각 항목은 추가 데이터 품질 검증 및 별도 설계 후 착수한다.
+
+---
+
+**프로젝트 성격:** 취재기자가 데이터와 근거를 점검하면서 기사 초안을 만들도록 돕는 **로컬 프로토타입**. 자동 검수 결과만으로 보도하거나 외부에 자동 발행하지 않는다.
